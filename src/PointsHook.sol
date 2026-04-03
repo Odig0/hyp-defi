@@ -5,98 +5,140 @@ pragma solidity ^0.8.24;
  * @title PointsHook
  * @dev Hook de Uniswap v4 que recompensa a los usuarios que compran tokens de equipos
  * 
- * Funciona así:
- * 1. Escucha todos los swaps del pool
- * 2. Detecta si el usuario está COMPRANDO el token del equipo (token1)
- * 3. Calcula el 20% del valor del swap en ETH
- * 4. Mintea puntos equivalentes como recompensa
+ * NOTA: Esta version simplificada se enfoca en la logica de recompensas.
+ * En produccion, necesitarias registrar correctamente el hook en Uniswap v4.
  */
 
-import {BaseHook} from "v4-core/BaseHook.sol";
-import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {PoolKey, PoolId, Pool} from "v4-core/types/entities/Pool.sol";
-import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
-import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {BeforeSwapDelta, toBeforeSwapDelta} from "v4-core/types/BeforeSwapDelta.sol";
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {FootballPoints} from "./FootballPoints.sol";
 
-contract PointsHook is BaseHook {
+contract PointsHook is IHooks, Ownable {
     // Referencia al contrato de puntos
     FootballPoints public pointsContract;
+    
+    // Referencia al PoolManager
+    IPoolManager public poolManager;
 
-    // Mapeo: key de pool ID => ID del equipo en ERC-1155
-    // Esto te permite asociar cada pool con un equipo específico
-    mapping(PoolId => uint256) public poolToTeamId;
+    // Mapeo: key hash => ID del equipo en ERC-1155
+    mapping(bytes32 => uint256) public poolKeyToTeamId;
 
-    // Porcentaje de recompensa: 20% = 20 (pensado como 20/100)
+    // Porcentaje de recompensa: 20%
     uint256 public constant REWARD_PERCENTAGE = 20;
 
-    // Eventos para auditoría
-    event PoolRegistered(PoolId indexed poolId, uint256 teamId);
-    event RewardsAwarded(address indexed user, uint256 indexed teamId, uint256 points);
+    // Eventos
+    event PoolRegistered(bytes32 indexed poolKeyHash, uint256 teamId);
+    event RewardsAwarded(address indexed user, uint256 indexed teamId, uint256 points, uint256 ethSpent);
 
     /**
      * @dev Constructor del Hook
-     * @param _poolManager Dirección del PoolManager de Uniswap v4
-     * @param _pointsContract Dirección del contrato de puntos
+     * @param _poolManager Direccion del PoolManager de Uniswap v4
+     * @param _pointsContract Direccion del contrato de puntos
      */
     constructor(
         IPoolManager _poolManager,
         FootballPoints _pointsContract
-    ) BaseHook(_poolManager) {
-        require(address(_pointsContract) != address(0), "Puntos invalido");
+    ) Ownable(msg.sender) {
+        require(address(_poolManager) != address(0), "PoolManager invalido");
+        require(address(_pointsContract) != address(0), "Points invalido");
+        
+        poolManager = _poolManager;
         pointsContract = _pointsContract;
-    }
-
-    // ============ HOOKS REQUERIDAS ============
-
-    /**
-     * @dev Retorna qué hooks implementamos (solo afterSwap)
-     */
-    function getHooksCalls() public pure override returns (Hooks.Calls memory) {
-        return Hooks.Calls({
-            beforeInitialize: false,
-            afterInitialize: false,
-            beforeAddLiquidity: false,
-            afterAddLiquidity: false,
-            beforeRemoveLiquidity: false,
-            afterRemoveLiquidity: false,
-            beforeSwap: false,
-            afterSwap: true,
-            beforeDonate: false,
-            afterDonate: false,
-            noOpSwap: false,
-            noOpPositionModify: false
-        });
     }
 
     // ============ REGISTRO DE POOLS ============
 
     /**
-     * @dev Registra un pool específico con un equipo
-     * Solo el owner puede hacerlo
+     * @dev Registra un pool especifico con un equipo
      * @param key La clave del pool
      * @param teamId El ID del equipo (token ID en ERC-1155)
      */
-    function registerPool(PoolKey calldata key, uint256 teamId) external {
-        PoolId poolId = key.toId();
-        poolToTeamId[poolId] = teamId;
-        emit PoolRegistered(poolId, teamId);
+    function registerPool(PoolKey calldata key, uint256 teamId) external onlyOwner {
+        require(teamId > 0, "TeamId invalido");
+        
+        bytes32 poolKeyHash = keccak256(abi.encode(key));
+        poolKeyToTeamId[poolKeyHash] = teamId;
+        
+        emit PoolRegistered(poolKeyHash, teamId);
     }
 
-    // ============ HOOK PRINCIPAL: afterSwap ============
+    // ============ HOOKS INTERFAZ IHooks ============
+
+    function beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96)
+        external
+        returns (bytes4)
+    {
+        return IHooks.beforeInitialize.selector;
+    }
+
+    function afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
+        external
+        returns (bytes4)
+    {
+        return IHooks.afterInitialize.selector;
+    }
+
+    function beforeAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        bytes calldata hookData
+    ) external returns (bytes4) {
+        return IHooks.beforeAddLiquidity.selector;
+    }
+
+    function afterAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external returns (bytes4, BalanceDelta) {
+        return (IHooks.afterAddLiquidity.selector, BalanceDelta.wrap(0));
+    }
+
+    function beforeRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        bytes calldata hookData
+    ) external returns (bytes4) {
+        return IHooks.beforeRemoveLiquidity.selector;
+    }
+
+    function afterRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external returns (bytes4, BalanceDelta) {
+        return (IHooks.afterRemoveLiquidity.selector, BalanceDelta.wrap(0));
+    }
+
+    function beforeSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, bytes calldata)
+        external
+        pure
+        returns (bytes4, BeforeSwapDelta, uint24)
+    {
+        BeforeSwapDelta delta = toBeforeSwapDelta(int128(0), int128(0));
+        return (this.beforeSwap.selector, delta, 0);
+    }
 
     /**
-     * @dev Se ejecuta DESPUÉS de cualquier swap en el pool
+     * @dev Hook principal: se ejecuta DESPUES de cada swap
      * 
-     * Parámetros explicados:
-     * - sender: quién ejecutó el swap (usuario)
-     * - key: datos del pool (token0, token1, fee, etc)
-     * - params: parámetros del swap
-     * - delta: cambios en balances (positivo = recibe, negativo = paga)
+     * Este es el unico hook que implementamos realmente para esta demostracion.
+     * En produccion, todo el acceso a este hook seria controlado por Uniswap v4.
      */
     function afterSwap(
         address sender,
@@ -104,56 +146,58 @@ contract PointsHook is BaseHook {
         IPoolManager.SwapParams calldata params,
         BalanceDelta delta,
         bytes calldata hookData
-    ) external override returns (bytes4) {
-        // El hookData puede contener parámetros adicionales si lo necesitas
-        // Por ahora no lo usamos
+    ) external returns (bytes4, int128) {
+        // Obtener el team ID para este pool
+        bytes32 poolKeyHash = keccak256(abi.encode(key));
+        uint256 teamId = poolKeyToTeamId[poolKeyHash];
 
-        PoolId poolId = key.toId();
-        uint256 teamId = poolToTeamId[poolId];
-
-        // Si el pool no está registrado, no hacemos nada
+        // Si el pool no esta registrado, no hacemos nada
         if (teamId == 0) {
-            return BaseHook.afterSwap.selector;
+            return (IHooks.afterSwap.selector, 0);
         }
 
         // ============ DETECTAR COMPRA vs VENTA ============
-        // En Uniswap:
-        // - delta0 > 0: usuario RECIBE token0 (vende token1)
-        // - delta0 < 0: usuario PAGA token0 (compra token1)
-        // - delta1 > 0: usuario RECIBE token1 (vende token0)
-        // - delta1 < 0: usuario PAGA token1 (compra token0)
-
-        // Si amountSpecified > 0 en params, el usuario está pagando (swap exacto de entrada)
-        // Si amountSpecified < 0, el usuario está pidiendo exacto de salida (swap exacto de salida)
-
         int128 amount0 = delta.amount0();
         int128 amount1 = delta.amount1();
 
-        // Determinamos si es una COMPRA del token1 (token del equipo)
-        // COMPRA: usuario recibe token1 positivo (delta1 > 0)
+        // Si amount1 > 0, el usuario RECIBE token1 (compra)
+        // Si amount1 < 0, el usuario ENVIA token1 (venta)
         bool isBuyingTeamToken = amount1 > 0;
 
-        // Si es una venta, no otorgamos recompensas
         if (!isBuyingTeamToken) {
-            return BaseHook.afterSwap.selector;
+            return (IHooks.afterSwap.selector, 0);
         }
 
         // ============ CALCULAR RECOMPENSA ============
-        // Usamos el valor en token0 (ETH) que se gastó
-        // exactAmount0 es lo que el usuario pagó en token0 (será negativo)
-        uint256 ethSpent = uint256(-amount0);
+        // El usuario gasto ETH (amount0 es negativo)
+        uint256 ethSpent;
+        if (amount0 < 0) {
+            ethSpent = uint256(int256(-amount0));
+        }
 
-        // Calcular el 20% del ETH gastado
+        // Calcular 20% del ETH gastado
         uint256 rewardPoints = (ethSpent * REWARD_PERCENTAGE) / 100;
 
         // ============ MINTEAR PUNTOS ============
-        // Usamos la referencia al contrato de puntos para mintear
-        // Enviamos al sender (quien hizo el swap)
-        pointsContract.mint(sender, teamId, rewardPoints);
+        if (rewardPoints > 0) {
+            pointsContract.mint(sender, teamId, rewardPoints);
+            emit RewardsAwarded(sender, teamId, rewardPoints, ethSpent);
+        }
 
-        emit RewardsAwarded(sender, teamId, rewardPoints);
+        return (IHooks.afterSwap.selector, 0);
+    }
 
-        // Retornamos el selector para confirmar que procesamos el hook correctamente
-        return BaseHook.afterSwap.selector;
+    function beforeDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
+        external
+        returns (bytes4)
+    {
+        return IHooks.beforeDonate.selector;
+    }
+
+    function afterDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
+        external
+        returns (bytes4)
+    {
+        return IHooks.afterDonate.selector;
     }
 }

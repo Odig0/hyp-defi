@@ -3,16 +3,16 @@ pragma solidity ^0.8.24;
 
 /**
  * @title DeploymentExample
- * @dev Ejemplo de cómo desplegar e integrar el sistema de hooks
+ * @dev Ejemplo de como desplegar e integrar el sistema de hooks
  * 
  * Este archivo muestra:
- * 1. Cómo desplegar los contratos
- * 2. Cómo registrar pools
- * 3. Cómo el sistema funciona end-to-end
+ * 1. Como desplegar los contratos
+ * 2. Como registrar pools
+ * 3. Como el sistema funciona end-to-end
  */
 
-import {FootballPoints} from "./FootballPoints.sol";
-import {PointsHook} from "./PointsHook.sol";
+import {FootballPoints} from "../src/FootballPoints.sol";
+import {PointsHook} from "../src/PointsHook.sol";
 
 /**
  * ============ PASO 1: DESPLIEGUE ============

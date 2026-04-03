@@ -9,10 +9,6 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {FootballPoints} from "../src/FootballPoints.sol";
 import {PointsHook} from "../src/PointsHook.sol";
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {PoolKey, PoolId} from "v4-core/types/entities/Pool.sol";
-import {Currency} from "v4-core/types/Currency.sol";
-import {Constants} from "v4-core/libraries/Constants.sol";
 
 contract PointsHookTest is Test {
     // Contratos instanciados
@@ -181,7 +177,7 @@ contract PointsHookTest is Test {
         vm.startPrank(owner);
         pointsContract.addMinter(owner);
 
-        vm.expectRevert("Destinatario inválido");
+        vm.expectRevert("Destinatario invalido");
         pointsContract.mint(address(0), TEAM_BRASIL_ID, 100);
 
         vm.stopPrank();

@@ -19,7 +19,7 @@ contract FootballPoints is ERC1155, Ownable {
     event MinterAdded(address indexed minter);
     event MinterRemoved(address indexed minter);
 
-    constructor() ERC1155("ipfs://QmPlaceholder/") {}
+    constructor() ERC1155("ipfs://QmPlaceholder/") Ownable(msg.sender) {}
 
     /**
      * @dev Agregamos una dirección como minter (solo owner)
